@@ -1,3 +1,13 @@
+from pathlib import Path
+from dotenv import load_dotenv
+import os
+import yaml
+
+# Load the global .env file first, then the local one if it exists
+home = str(Path.home())
+load_dotenv(f"{home}/.env")
+load_dotenv(Path(__file__).parent.parent / ".env")  # Load local .env if it exists
+
 from langchain_core.messages import HumanMessage
 from langgraph.graph import END, StateGraph
 from colorama import Fore, Back, Style, init
@@ -118,7 +128,9 @@ def create_workflow(selected_analysts=None):
 
 if __name__ == "__main__":
     parser = argparse.ArgumentParser(description="Run the hedge fund trading system")
-    parser.add_argument("--ticker", type=str, required=True, help="Stock ticker symbol")
+    group = parser.add_mutually_exclusive_group(required=True)
+    group.add_argument("--tickers", type=str, nargs='+', help="One or more stock ticker symbols")
+    group.add_argument("--config", type=str, help="Path to YAML configuration file")
     parser.add_argument(
         "--start-date",
         type=str,
@@ -132,6 +144,22 @@ if __name__ == "__main__":
     )
 
     args = parser.parse_args()
+
+    # Load configuration from YAML if provided
+    if args.config:
+        with open(args.config, 'r') as f:
+            config = yaml.safe_load(f)
+        positions = config.get('positions', {})
+        tickers = list(positions.keys())
+        base_portfolio = {
+            "cash": config.get('portfolio', {}).get('cash', 100000.0),
+        }
+    else:
+        tickers = args.tickers
+        base_portfolio = {
+            "cash": 100000.0,
+        }
+        positions = {ticker: {"stock": 0} for ticker in tickers}
 
     selected_analysts = None
     choices = questionary.checkbox(
@@ -185,19 +213,26 @@ if __name__ == "__main__":
     else:
         start_date = args.start_date
 
-    # TODO: Make this configurable via args
-    portfolio = {
-        "cash": 100000.0,  # $100,000 initial cash
-        "stock": 0,  # No initial stock position
-    }
+    # Process each ticker
+    for ticker in tickers:
+        print(f"\n{Fore.CYAN}Analyzing {ticker}{Style.RESET_ALL}")
+        print("=" * 50)
+        
+        # Create portfolio for this ticker
+        portfolio = base_portfolio.copy()
+        portfolio["stock"] = positions[ticker].get("stock", 0)
+        
+        # Run the hedge fund
+        try:
 
-    # Run the hedge fund
-    result = run_hedge_fund(
-        ticker=args.ticker,
-        start_date=start_date,
-        end_date=end_date,
-        portfolio=portfolio,
-        show_reasoning=args.show_reasoning,
-        selected_analysts=selected_analysts,
-    )
-    print_trading_output(result)
+            result = run_hedge_fund(
+                ticker=ticker,
+                start_date=start_date,
+                end_date=end_date,
+                portfolio=portfolio,
+                show_reasoning=args.show_reasoning,
+                selected_analysts=selected_analysts,
+            )
+            print_trading_output(result)
+        except Exception as e:
+            print(f"{Fore.RED}Error processing {ticker}: {e}{Style.RESET_ALL}")
